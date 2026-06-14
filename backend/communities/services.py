@@ -1,3 +1,4 @@
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from django.db import transaction
@@ -11,33 +12,131 @@ def make_number(prefix):
     return f"{prefix}{timezone.now().strftime('%Y%m%d%H%M%S%f')}"
 
 
+def parse_period_to_date(period):
+    parts = period.split("-")
+    if len(parts) >= 2:
+        try:
+            year = int(parts[0])
+            month = int(parts[1])
+            return date(year, month, 1)
+        except (ValueError, IndexError):
+            pass
+    return timezone.localdate()
+
+
+def get_period_end_date(period):
+    parts = period.split("-")
+    if len(parts) >= 2:
+        try:
+            year = int(parts[0])
+            month = int(parts[1])
+            if month == 12:
+                return date(year + 1, 1, 1) - timedelta(days=1)
+            return date(year, month + 1, 1) - timedelta(days=1)
+        except (ValueError, IndexError):
+            pass
+    return timezone.localdate()
+
+
+def get_fee_type_by_period(name, period):
+    period_end = get_period_end_date(period)
+    return FeeType.get_active_version(name, period_end)
+
+
+@transaction.atomic
+def create_fee_type(name, billing_method, amount, cycle, effective_date=None, description=""):
+    effective_date = effective_date or timezone.localdate()
+    last_version = FeeType.objects.filter(name=name).order_by("-version").first()
+    new_version = last_version.version + 1 if last_version else 1
+
+    parent = None
+    if last_version:
+        parent = last_version.parent if last_version.parent else last_version
+
+    fee_type = FeeType.objects.create(
+        name=name,
+        parent=parent,
+        version=new_version,
+        effective_date=effective_date,
+        billing_method=billing_method,
+        amount=amount,
+        cycle=cycle,
+        description=description,
+        is_active=True,
+    )
+
+    return fee_type
+
+
+@transaction.atomic
+def update_fee_type(fee_type_id, **kwargs):
+    fee_type = FeeType.objects.get(pk=fee_type_id)
+
+    allowed_fields = {"billing_method", "amount", "cycle", "effective_date", "description", "name"}
+    update_fields = {k: v for k, v in kwargs.items() if k in allowed_fields and v is not None}
+
+    if not update_fields:
+        return fee_type, False
+
+    name = update_fields.get("name", fee_type.name)
+    billing_method = update_fields.get("billing_method", fee_type.billing_method)
+    amount = update_fields.get("amount", fee_type.amount)
+    cycle = update_fields.get("cycle", fee_type.cycle)
+    effective_date = update_fields.get("effective_date", fee_type.effective_date)
+    description = update_fields.get("description", fee_type.description)
+
+    has_bill = Bill.objects.filter(fee_type=fee_type).exists()
+    if has_bill:
+        new_fee_type = create_fee_type(
+            name=name,
+            billing_method=billing_method,
+            amount=amount,
+            cycle=cycle,
+            effective_date=effective_date,
+            description=description,
+        )
+        return new_fee_type, True
+
+    for k, v in update_fields.items():
+        setattr(fee_type, k, v)
+    fee_type.save(update_fields=list(update_fields.keys()))
+    return fee_type, False
+
+
 @transaction.atomic
 def generate_bills(fee_type_id, period, due_date, room_ids=None):
-    fee_type = FeeType.objects.get(pk=fee_type_id, is_active=True)
+    fee_type = FeeType.objects.get(pk=fee_type_id)
+    actual_fee_type = get_fee_type_by_period(fee_type.name, period)
+
+    if actual_fee_type is None:
+        raise ValueError(f"未找到 {fee_type.name} 在 {period} 账期的有效费用标准")
+
     rooms = Room.objects.filter(is_active=True)
     if room_ids:
         rooms = rooms.filter(id__in=room_ids)
 
     created = []
     skipped = 0
+    snapshot = actual_fee_type.get_snapshot()
     for room in rooms.select_related("building"):
-        amount = fee_type.calculate_amount(room)
+        amount = actual_fee_type.calculate_amount(room)
         bill, was_created = Bill.objects.get_or_create(
             room=room,
-            fee_type=fee_type,
+            fee_type=actual_fee_type,
             period=period,
             defaults={
                 "bill_no": make_number("B"),
                 "amount": amount,
                 "due_date": due_date,
                 "status": Bill.UNPAID,
+                "fee_type_snapshot": snapshot,
             },
         )
         if was_created:
             created.append(bill)
         else:
             skipped += 1
-    return created, skipped
+    return created, skipped, actual_fee_type
 
 
 @transaction.atomic

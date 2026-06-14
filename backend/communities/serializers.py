@@ -27,9 +27,33 @@ class BuildingDetailSerializer(BuildingSerializer):
 
 
 class FeeTypeSerializer(serializers.ModelSerializer):
+    version_label = serializers.CharField(read_only=True)
+    billing_method_label = serializers.CharField(source="get_billing_method_display", read_only=True)
+    cycle_label = serializers.CharField(source="get_cycle_display", read_only=True)
+    has_bills = serializers.SerializerMethodField()
+
     class Meta:
         model = FeeType
-        fields = ["id", "name", "billing_method", "amount", "cycle", "is_active", "description"]
+        fields = [
+            "id",
+            "name",
+            "version",
+            "version_label",
+            "effective_date",
+            "billing_method",
+            "billing_method_label",
+            "amount",
+            "cycle",
+            "cycle_label",
+            "is_active",
+            "description",
+            "has_bills",
+            "created_at",
+        ]
+        read_only_fields = ["version", "version_label", "has_bills", "created_at"]
+
+    def get_has_bills(self, obj):
+        return obj.bills.exists()
 
 
 class BillSerializer(serializers.ModelSerializer):
@@ -38,6 +62,8 @@ class BillSerializer(serializers.ModelSerializer):
     phone = serializers.CharField(source="room.phone", read_only=True)
     fee_name = serializers.CharField(source="fee_type.name", read_only=True)
     is_overdue = serializers.BooleanField(read_only=True)
+    fee_version_label = serializers.CharField(read_only=True)
+    fee_type_snapshot = serializers.JSONField(read_only=True)
 
     class Meta:
         model = Bill
@@ -50,6 +76,8 @@ class BillSerializer(serializers.ModelSerializer):
             "phone",
             "fee_type",
             "fee_name",
+            "fee_version_label",
+            "fee_type_snapshot",
             "period",
             "amount",
             "status",
@@ -58,7 +86,7 @@ class BillSerializer(serializers.ModelSerializer):
             "paid_at",
             "is_overdue",
         ]
-        read_only_fields = ["bill_no", "amount", "generated_at", "paid_at", "is_overdue"]
+        read_only_fields = ["bill_no", "amount", "generated_at", "paid_at", "is_overdue", "fee_version_label", "fee_type_snapshot"]
 
     def get_room_label(self, obj):
         return f"{obj.room.building.name}-{obj.room.room_no}"

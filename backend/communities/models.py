@@ -57,25 +57,77 @@ class FeeType(models.Model):
         (YEARLY, "年度"),
     )
 
-    name = models.CharField("费用名称", max_length=80, unique=True)
+    name = models.CharField("费用名称", max_length=80)
+    parent = models.ForeignKey(
+        "self",
+        related_name="versions",
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        verbose_name="主费用类型",
+    )
+    version = models.PositiveIntegerField("版本号", default=1)
+    effective_date = models.DateField("生效日期", default=timezone.localdate)
     billing_method = models.CharField("计费方式", max_length=20, choices=BILLING_METHOD_CHOICES, default=FIXED)
     amount = models.DecimalField("金额或单价", max_digits=10, decimal_places=2)
     cycle = models.CharField("计费周期", max_length=20, choices=CYCLE_CHOICES, default=MONTHLY)
     is_active = models.BooleanField("启用", default=True)
     description = models.TextField("说明", blank=True)
+    created_at = models.DateTimeField("创建时间", default=timezone.now)
 
     class Meta:
-        ordering = ["name"]
+        ordering = ["name", "-effective_date", "-version"]
         verbose_name = "费用类型"
         verbose_name_plural = "费用类型"
+        unique_together = ("name", "version")
 
     def __str__(self):
-        return self.name
+        return f"{self.name}(v{self.version})"
+
+    @property
+    def version_label(self):
+        return f"v{self.version} ({self.effective_date.strftime('%Y-%m-%d')}起生效)"
 
     def calculate_amount(self, room):
         if self.billing_method == self.AREA:
             return (self.amount * room.area).quantize(Decimal("0.01"))
         return self.amount
+
+    def get_snapshot(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "version": self.version,
+            "version_label": self.version_label,
+            "effective_date": self.effective_date.isoformat(),
+            "billing_method": self.billing_method,
+            "billing_method_label": self.get_billing_method_display(),
+            "amount": str(self.amount),
+            "cycle": self.cycle,
+            "cycle_label": self.get_cycle_display(),
+            "description": self.description,
+        }
+
+    @classmethod
+    def get_active_version(cls, name, period_date=None):
+        if period_date is None:
+            period_date = timezone.localdate()
+        return (
+            cls.objects.filter(
+                name=name,
+                effective_date__lte=period_date,
+            )
+            .order_by("-effective_date", "-version")
+            .first()
+        )
+
+    @classmethod
+    def get_latest_version(cls, name):
+        return (
+            cls.objects.filter(name=name, is_active=True)
+            .order_by("-effective_date", "-version")
+            .first()
+        )
 
 
 class Bill(models.Model):
@@ -93,6 +145,7 @@ class Bill(models.Model):
     bill_no = models.CharField("账单编号", max_length=40, unique=True)
     room = models.ForeignKey(Room, related_name="bills", on_delete=models.PROTECT)
     fee_type = models.ForeignKey(FeeType, related_name="bills", on_delete=models.PROTECT)
+    fee_type_snapshot = models.JSONField("费用标准快照", default=dict)
     period = models.CharField("账期", max_length=20)
     amount = models.DecimalField("应收金额", max_digits=10, decimal_places=2)
     status = models.CharField("状态", max_length=20, choices=STATUS_CHOICES, default=UNPAID)
@@ -112,6 +165,12 @@ class Bill(models.Model):
     @property
     def is_overdue(self):
         return self.status in {self.UNPAID, self.OVERDUE} and self.due_date < timezone.localdate()
+
+    @property
+    def fee_version_label(self):
+        if self.fee_type_snapshot:
+            return self.fee_type_snapshot.get("version_label", "")
+        return f"v{self.fee_type.version}"
 
 
 class Payment(models.Model):

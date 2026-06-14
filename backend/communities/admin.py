@@ -18,15 +18,24 @@ class RoomAdmin(admin.ModelAdmin):
 
 @admin.register(FeeType)
 class FeeTypeAdmin(admin.ModelAdmin):
-    list_display = ("name", "billing_method", "amount", "cycle", "is_active")
+    list_display = ("name", "version", "effective_date", "billing_method", "amount", "cycle", "is_active")
     list_filter = ("billing_method", "cycle", "is_active")
+    search_fields = ("name", "version")
+
+    def get_version_label(self, obj):
+        return obj.version_label
+    get_version_label.short_description = "版本"
 
 
 @admin.register(Bill)
 class BillAdmin(admin.ModelAdmin):
-    list_display = ("bill_no", "room", "fee_type", "period", "amount", "status", "due_date")
+    list_display = ("bill_no", "room", "fee_type", "fee_version_label", "period", "amount", "status", "due_date")
     list_filter = ("status", "fee_type", "period")
     search_fields = ("bill_no", "room__room_no", "room__owner_name")
+
+    def fee_version_label(self, obj):
+        return obj.fee_version_label
+    fee_version_label.short_description = "费用版本"
 
 
 @admin.register(Payment)
