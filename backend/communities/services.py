@@ -65,6 +65,10 @@ def create_fee_type(name, billing_method, amount, cycle, effective_date=None, de
         is_active=True,
     )
 
+    if last_version and last_version.effective_date <= effective_date:
+        last_version.is_active = False
+        last_version.save(update_fields=["is_active"])
+
     return fee_type
 
 

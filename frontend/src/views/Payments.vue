@@ -20,6 +20,11 @@
       </div>
       <DataTable :columns="paymentColumns" :rows="payments">
         <template #cell-amount="{ row }">¥{{ Number(row.amount).toFixed(2) }}</template>
+        <template #cell-fee_version_label="{ row }">
+          <span class="version-badge small" :title="JSON.stringify(row.fee_type_snapshot, null, 2)">
+            {{ row.fee_version_label }}
+          </span>
+        </template>
       </DataTable>
     </section>
   </div>
@@ -47,6 +52,8 @@ const paymentColumns = [
   { key: "bill_no", label: "账单编号" },
   { key: "room_label", label: "房屋" },
   { key: "owner_name", label: "付款人" },
+  { key: "fee_name", label: "费用" },
+  { key: "fee_version_label", label: "费用版本" },
   { key: "amount", label: "金额" },
   { key: "method", label: "方式" },
   { key: "paid_at", label: "支付时间" }
@@ -63,3 +70,20 @@ async function pay(row) {
 
 onMounted(load);
 </script>
+
+<style scoped>
+.version-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #e3f2fd;
+  color: #1565c0;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.version-badge.small {
+  padding: 1px 6px;
+  font-size: 11px;
+}
+</style>

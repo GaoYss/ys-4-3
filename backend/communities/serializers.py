@@ -97,6 +97,8 @@ class PaymentSerializer(serializers.ModelSerializer):
     room_label = serializers.SerializerMethodField()
     owner_name = serializers.CharField(source="bill.room.owner_name", read_only=True)
     fee_name = serializers.CharField(source="bill.fee_type.name", read_only=True)
+    fee_version_label = serializers.CharField(source="bill.fee_version_label", read_only=True)
+    fee_type_snapshot = serializers.JSONField(source="bill.fee_type_snapshot", read_only=True)
     period = serializers.CharField(source="bill.period", read_only=True)
 
     class Meta:
@@ -109,6 +111,8 @@ class PaymentSerializer(serializers.ModelSerializer):
             "room_label",
             "owner_name",
             "fee_name",
+            "fee_version_label",
+            "fee_type_snapshot",
             "period",
             "amount",
             "method",
@@ -116,7 +120,7 @@ class PaymentSerializer(serializers.ModelSerializer):
             "payer",
             "receipt_no",
         ]
-        read_only_fields = ["payment_no", "receipt_no", "paid_at"]
+        read_only_fields = ["payment_no", "receipt_no", "paid_at", "fee_version_label", "fee_type_snapshot"]
 
     def get_room_label(self, obj):
         return f"{obj.bill.room.building.name}-{obj.bill.room.room_no}"

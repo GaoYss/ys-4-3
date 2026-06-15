@@ -149,9 +149,18 @@ const feeForm = reactive({
 });
 const generateForm = reactive({ fee_type: "", period: "", due_date: "" });
 
-const activeFeeTypes = computed(() =>
-  feeTypes.value.filter(f => f.is_active)
-);
+const activeFeeTypes = computed(() => {
+  const latestByFee = new Map();
+  feeTypes.value
+    .filter(f => f.is_active)
+    .sort((a, b) => b.version - a.version)
+    .forEach(f => {
+      if (!latestByFee.has(f.name)) {
+        latestByFee.set(f.name, f);
+      }
+    });
+  return Array.from(latestByFee.values()).sort((a, b) => a.name.localeCompare(b.name));
+});
 
 const feeColumns = [
   { key: "name", label: "名称" },
