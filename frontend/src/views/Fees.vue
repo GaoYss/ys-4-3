@@ -51,24 +51,53 @@
         <h2>费用标准</h2>
         <button @click="load">刷新</button>
       </div>
-      <DataTable :columns="feeColumns" :rows="feeTypes">
-        <template #cell-version_label="{ row }">
-          <span class="version-badge">{{ row.version_label }}</span>
-        </template>
-        <template #cell-amount="{ row }">
-          <span v-if="row.billing_method === 'area'">¥{{ Number(row.amount).toFixed(2) }}/㎡</span>
-          <span v-else>¥{{ Number(row.amount).toFixed(2) }}</span>
-        </template>
-        <template #cell-is_active="{ row }">
-          <span :class="['status-badge', row.is_active ? 'active' : 'inactive']">
-            {{ row.is_active ? '启用' : '停用' }}
-          </span>
-        </template>
-        <template #cell-actions="{ row }">
-          <button @click="editFee(row)" class="link">编辑</button>
-          <button @click="showHistory(row)" class="link">历史</button>
-        </template>
-      </DataTable>
+
+      <div class="fee-groups">
+        <div v-for="group in groupedFeeTypes" :key="group.name" class="fee-group">
+          <div class="group-active-row" @click="editFee(group.activeRow)">
+            <div class="row-col col-name">{{ group.name }}</div>
+            <div class="row-col">
+              <span class="version-badge">{{ group.activeRow.version_label }}</span>
+            </div>
+            <div class="row-col">{{ group.activeRow.billing_method_label }}</div>
+            <div class="row-col">
+              <span v-if="group.activeRow.billing_method === 'area'">¥{{ Number(group.activeRow.amount).toFixed(2) }}/㎡</span>
+              <span v-else>¥{{ Number(group.activeRow.amount).toFixed(2) }}</span>
+            </div>
+            <div class="row-col">{{ group.activeRow.cycle_label }}</div>
+            <div class="row-col">
+              <span class="status-badge active">启用</span>
+            </div>
+            <div class="row-col col-actions">
+              <button @click.stop="editFee(group.activeRow)" class="link">编辑</button>
+              <button v-if="group.oldVersions.length" @click.stop="toggleGroup(group.name)" class="link">
+                {{ expandedGroups.has(group.name) ? '收起历史' : `历史版本 (${group.oldVersions.length})` }}
+              </button>
+            </div>
+          </div>
+
+          <div v-if="expandedGroups.has(group.name) && group.oldVersions.length" class="group-old-versions">
+            <div v-for="row in group.oldVersions" :key="row.id" class="group-old-row">
+              <div class="row-col col-name"></div>
+              <div class="row-col">
+                <span class="version-badge small">{{ row.version_label }}</span>
+              </div>
+              <div class="row-col">{{ row.billing_method_label }}</div>
+              <div class="row-col">
+                <span v-if="row.billing_method === 'area'">¥{{ Number(row.amount).toFixed(2) }}/㎡</span>
+                <span v-else>¥{{ Number(row.amount).toFixed(2) }}</span>
+              </div>
+              <div class="row-col">{{ row.cycle_label }}</div>
+              <div class="row-col">
+                <span class="status-badge inactive">停用</span>
+              </div>
+              <div class="row-col col-actions">
+                <span class="muted">{{ row.created_at?.split('T')[0] }} 创建</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div class="panel-head section-gap">
         <h2>账单列表</h2>
@@ -139,6 +168,7 @@ const message = ref("");
 const editingFee = ref(null);
 const historyFee = ref(null);
 const historyVisible = ref(false);
+const expandedGroups = ref(new Set());
 const feeForm = reactive({
   name: "",
   billing_method: "fixed",
@@ -162,15 +192,30 @@ const activeFeeTypes = computed(() => {
   return Array.from(latestByFee.values()).sort((a, b) => a.name.localeCompare(b.name));
 });
 
-const feeColumns = [
-  { key: "name", label: "名称" },
-  { key: "version_label", label: "版本" },
-  { key: "billing_method_label", label: "计费方式" },
-  { key: "amount", label: "金额/单价" },
-  { key: "cycle_label", label: "周期" },
-  { key: "is_active", label: "状态" },
-  { key: "actions", label: "操作" }
-];
+const groupedFeeTypes = computed(() => {
+  const groups = new Map();
+  feeTypes.value.forEach(f => {
+    if (!groups.has(f.name)) {
+      groups.set(f.name, { name: f.name, activeRow: null, oldVersions: [] });
+    }
+    const g = groups.get(f.name);
+    if (f.is_active) {
+      if (!g.activeRow || f.version > g.activeRow.version) {
+        if (g.activeRow) g.oldVersions.unshift(g.activeRow);
+        g.activeRow = f;
+      } else {
+        g.oldVersions.unshift(f);
+      }
+    } else {
+      g.oldVersions.push(f);
+    }
+  });
+  const result = Array.from(groups.values());
+  result.forEach(g => {
+    g.oldVersions.sort((a, b) => (b.effective_date || "").localeCompare(a.effective_date || "") || b.version - a.version);
+  });
+  return result.sort((a, b) => a.name.localeCompare(b.name));
+});
 
 const billColumns = [
   { key: "bill_no", label: "账单编号" },
@@ -252,6 +297,12 @@ function closeHistory() {
   feeHistory.value = [];
 }
 
+function toggleGroup(name) {
+  const next = new Set(expandedGroups.value);
+  if (next.has(name)) next.delete(name); else next.add(name);
+  expandedGroups.value = next;
+}
+
 async function generate() {
   const result = await propertyApi.generateBills({ ...generateForm });
   const feeUsed = result.fee_type_used;
@@ -315,6 +366,82 @@ button.link {
 
 button.link:hover {
   text-decoration: underline;
+}
+
+.muted {
+  color: #999;
+  font-size: 12px;
+}
+
+.fee-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.fee-group + .fee-group {
+  border-top: 1px solid #e0e0e0;
+}
+
+.group-active-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 1fr 1fr 0.8fr 0.7fr 1.4fr;
+  align-items: center;
+  padding: 10px 12px;
+  gap: 8px;
+  cursor: pointer;
+  background: #fafbfc;
+  transition: background 0.15s;
+}
+
+.group-active-row:hover {
+  background: #f0f7ff;
+}
+
+.row-col {
+  font-size: 13px;
+}
+
+.col-name {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.col-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.group-old-versions {
+  background: #fafafa;
+  border-top: 1px dashed #e0e0e0;
+}
+
+.group-old-row {
+  display: grid;
+  grid-template-columns: 1.2fr 1.2fr 1fr 1fr 0.8fr 0.7fr 1.4fr;
+  align-items: center;
+  padding: 8px 12px 8px calc(12px + 24px);
+  gap: 8px;
+  opacity: 0.75;
+  border-bottom: 1px dotted #eee;
+}
+
+.group-old-row:last-child {
+  border-bottom: none;
+}
+
+.status-badge.active,
+.status-badge.inactive {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
 }
 
 .modal-overlay {
